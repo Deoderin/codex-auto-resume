@@ -97,6 +97,7 @@ class WatchState:
     initial_prompt: str
     continuation_prompt: str
     images: list[str] = field(default_factory=list)
+    allow_non_git_cwd: bool = False
     initial_submitted: bool = False
     attempts: int = 0
 
@@ -226,6 +227,11 @@ def run_codex(
     # Shared exec flags come before `resume`.
     command = [codex_exe, "exec", "--json"]
 
+    # Codex exec refuses to run outside a Git repository by default.
+    # We only bypass that protection when the user explicitly opted in.
+    if state.allow_non_git_cwd:
+        command += ["--skip-git-repo-check"]
+
     if state.cwd:
         command += ["--cd", state.cwd]
 
@@ -284,6 +290,7 @@ def watch(
             state=state,
             prompt=prompt,
             images=images,
+            allow_non_git_cwd=args.allow_non_git_cwd,
         )
 
         combined = stdout + "\n" + stderr
@@ -361,6 +368,14 @@ def main() -> int:
     parser.add_argument("--session", help="Existing Codex thread/session id")
     parser.add_argument("--cwd", help="Project working directory")
     parser.add_argument(
+        "--allow-non-git-cwd",
+        action="store_true",
+        help=(
+            "Allow Codex to run when --cwd is not inside a Git repository. "
+            "Use this only when you have verified the working directory."
+        ),
+    )
+    parser.add_argument(
         "--prompt",
         default="Continue working from where you stopped. Do not repeat completed work.",
         help="Queued first prompt",
@@ -427,6 +442,7 @@ def main() -> int:
             initial_prompt=prompt,
             continuation_prompt=args.continue_prompt,
             images=images,
+            allow_non_git_cwd=args.allow_non_git_cwd,
         )
         state_path = state_dir / f"{session_key(args.session)}.json"
         save_state(state_path, state)
