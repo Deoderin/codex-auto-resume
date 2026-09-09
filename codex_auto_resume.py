@@ -65,6 +65,8 @@ NETWORK_MARKERS = (
     "transport error",
 )
 
+CODEX_THREAD_URI_PREFIX = "codex://threads/"
+
 
 def now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -84,6 +86,17 @@ def app_state_dir() -> Path:
     p = base / "codex-auto-resume"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def normalize_session_id(session_id: str) -> str:
+    """Accept either a raw Codex UUID/thread name or a Desktop codex:// thread URI."""
+    value = session_id.strip()
+    if value.lower().startswith(CODEX_THREAD_URI_PREFIX):
+        value = value[len(CODEX_THREAD_URI_PREFIX):]
+        value = value.split("?", 1)[0].split("#", 1)[0].strip("/")
+    if not value:
+        raise SystemExit("Invalid/empty Codex session id.")
+    return value
 
 
 def session_key(session_id: str) -> str:
@@ -290,7 +303,6 @@ def watch(
             state=state,
             prompt=prompt,
             images=images,
-            allow_non_git_cwd=args.allow_non_git_cwd,
         )
 
         combined = stdout + "\n" + stderr
@@ -365,7 +377,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Safely resume a Codex thread after its usage limit resets."
     )
-    parser.add_argument("--session", help="Existing Codex thread/session id")
+    parser.add_argument("--session", help="Existing Codex thread/session id or codex://threads/... URI")
     parser.add_argument("--cwd", help="Project working directory")
     parser.add_argument(
         "--allow-non-git-cwd",
@@ -423,13 +435,16 @@ def main() -> int:
     if args.resume_state:
         if not args.session:
             raise SystemExit("--resume-state requires --session.")
-        state_path = state_dir / f"{session_key(args.session)}.json"
+        normalized_session = normalize_session_id(args.session)
+        state_path = state_dir / f"{session_key(normalized_session)}.json"
         if not state_path.exists():
             raise SystemExit(f"No saved state found for {args.session}")
         state = load_state(state_path)
+        state.session_id = normalize_session_id(state.session_id)
     else:
         if not args.session:
             raise SystemExit("--session is required.")
+        session_id = normalize_session_id(args.session)
         cwd, images = validate_paths(args.cwd, args.image)
         prompt = read_prompt(args)
 
@@ -437,14 +452,14 @@ def main() -> int:
             raise SystemExit("Prompt is empty.")
 
         state = WatchState(
-            session_id=args.session,
+            session_id=session_id,
             cwd=cwd,
             initial_prompt=prompt,
             continuation_prompt=args.continue_prompt,
             images=images,
             allow_non_git_cwd=args.allow_non_git_cwd,
         )
-        state_path = state_dir / f"{session_key(args.session)}.json"
+        state_path = state_dir / f"{session_key(session_id)}.json"
         save_state(state_path, state)
 
     lock_path = state_dir / f"{session_key(state.session_id)}.lock"
